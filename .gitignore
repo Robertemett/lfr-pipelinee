@@ -1,0 +1,8 @@
+# Git ignore patterns for local environment and generated output.
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+output/
+.DS_Store

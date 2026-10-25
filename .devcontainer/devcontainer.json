@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from lfr_pipeline.config import build_prompt_preview, ensure_directories, get_api_key, load_day, load_environment, read_calendar
+from lfr_pipeline.utils.ltx_client import build_ltx_payload, build_model_name, create_manifest
+from lfr_pipeline.utils.thumbnail import generate_placeholder_thumbnail
+
+
+def _resolve_days(args: argparse.Namespace) -> list[int]:
+    if args.day is not None:
+        return [int(args.day)]
+    if args.from_day is not None or args.to_day is not None:
+        start = int(args.from_day or 1)
+        end = int(args.to_day or start)
+        if end < start:
+            start, end = end, start
+        return list(range(start, end + 1))
+    return [1]
+
+
+def _print_day_preview(day_number: int, day_entry: dict) -> None:
+    print(f"\n=== Day {day_number:02d}: {day_entry.get('title', 'LFR Pipeline')} ===")
+    prompts = build_prompt_preview(day_entry)
+    if not prompts:
+        print("No prompts defined for this day.")
+        return
+    for index, prompt in enumerate(prompts, start=1):
+        print(f"{index}. {prompt}")
+
+
+def _stub_run(day_number: int, day_entry: dict, model: str, output_root: Path, single_clip: bool) -> None:
+    output_dir = output_root / f"day_{day_number:02d}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    prompts = build_prompt_preview(day_entry)
+    manifest = create_manifest(day_number, model, output_dir, prompts)
+    thumbnail_path = generate_placeholder_thumbnail(output_dir / "thumbnail.png", day_entry.get("title", f"Day {day_number:02d}"))
+    payload = build_ltx_payload(day_number, prompts, model, single_clip)
+    summary = output_dir / "pipeline_summary.json"
+    summary.write_text(
+        '{\n'
+        f'  "day": {day_number},\n'
+        f'  "model": "{model}",\n'
+        f'  "single_clip": {str(bool(single_clip)).lower()},\n'
+        f'  "manifest": "{manifest.as_posix()}",\n'
+        f'  "thumbnail": "{thumbnail_path}",\n'
+        f'  "payload": {str(payload).replace("'", "\"")}\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    print(f"Stub output created for day {day_number:02d}: {output_dir}")
+    print(f"Manifest: {manifest}")
+    print(f"Thumbnail: {thumbnail_path}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate LFR short-form video prompts and exports.")
+    parser.add_argument("--day", type=int, help="Generate a specific day number, for example --day 1")
+    parser.add_argument("--from", dest="from_day", type=int, help="Start day for a batch run")
+    parser.add_argument("--to", dest="to_day", type=int, help="End day for a batch run")
+    parser.add_argument("--dry-run", action="store_true", help="Only print the prompts and exit")
+    parser.add_argument("--single-clip", action="store_true", help="Render just one short clip instead of the full multi-clip short")
+    parser.add_argument("--duration", type=int, default=10, help="Clip duration in seconds when running a single short clip")
+    parser.add_argument("--model", default=None, help="Model name to pass through to the generation layer")
+    args = parser.parse_args()
+
+    load_environment()
+    ensure_directories()
+    calendar = read_calendar()
+    selected_days = _resolve_days(args)
+
+    if args.dry_run:
+        for day_number in selected_days:
+            day_entry = load_day(day_number, calendar)
+            _print_day_preview(day_number, day_entry)
+        return 0
+
+    model_name = build_model_name(args.model)
+    output_root = Path("output")
+    output_root.mkdir(parents=True, exist_ok=True)
+
+    key_present = bool(get_api_key())
+    if not key_present:
+        print("LTX_API_KEY is not set. Running in safe offline mode to avoid runtime errors.")
+
+    for day_number in selected_days:
+        day_entry = load_day(day_number, calendar)
+        if not key_present:
+            _stub_run(day_number, day_entry, model_name, output_root, args.single_clip)
+            continue
+        prompts = build_prompt_preview(day_entry)
+        output_dir = output_root / f"day_{day_number:02d}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        manifest = create_manifest(day_number, model_name, output_dir, prompts)
+        print(f"LTX key detected. Ready to generate day {day_number:02d} via model '{model_name}'.")
+        print(f"Manifest: {manifest}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

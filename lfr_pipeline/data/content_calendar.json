@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # optional dependency
+    load_dotenv = None
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT_DIR / "lfr_pipeline" / "data"
+OUTPUT_DIR = ROOT_DIR / "output"
+
+
+def load_environment() -> None:
+    """Load a local .env file if present without crashing when python-dotenv is unavailable."""
+    if load_dotenv is None:
+        return
+    for env_path in (ROOT_DIR / ".env", ROOT_DIR / "lfr_pipeline" / ".env"):
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+
+
+def get_api_key() -> str:
+    return os.getenv("LTX_API_KEY", "").strip()
+
+
+def ensure_directories() -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def read_calendar(calendar_path: str | Path | None = None) -> dict[str, Any]:
+    ensure_directories()
+    path = Path(calendar_path) if calendar_path else DATA_DIR / "content_calendar.json"
+    if not path.exists():
+        return {"days": []}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list):
+            return {"days": data}
+    except (OSError, ValueError, TypeError):
+        return {"days": []}
+    return {"days": []}
+
+
+def load_day(day_number: int, calendar: dict[str, Any] | None = None) -> dict[str, Any]:
+    calendar = calendar or read_calendar()
+    days = calendar.get("days", [])
+    for entry in days:
+        if isinstance(entry, dict) and int(entry.get("day", 0)) == day_number:
+            return entry
+    return {
+        "day": day_number,
+        "title": f"Day {day_number:02d}",
+        "segments": [
+            {"name": "hook", "duration": "8s", "prompt": "A cheerful nursery rhyme intro with friendly characters and bright colors."},
+            {"name": "main_a", "duration": "12s", "prompt": "A simple dance routine teaching a rhyme move with expressive motions."},
+            {"name": "main_b", "duration": "12s", "prompt": "A fun follow-along segment with repeating lyrics and simple choreography."},
+            {"name": "finale", "duration": "10s", "prompt": "A happy ending with a smile, waving, and a big celebratory finish."},
+        ],
+        "voiceover": "A cheerful nursery rhyme short for children.",
+    }
+
+
+def build_prompt_preview(day_entry: dict[str, Any]) -> list[str]:
+    segments = day_entry.get("segments", [])
+    prompts: list[str] = []
+    for segment in segments:
+        if isinstance(segment, dict):
+            prompts.append(str(segment.get("prompt", "")).strip())
+    return [item for item in prompts if item]
+
+__all__ = [
+    "ROOT_DIR",
+    "DATA_DIR",
+    "OUTPUT_DIR",
+    "load_environment",
+    "get_api_key",
+    "ensure_directories",
+    "read_calendar",
+    "load_day",
+    "build_prompt_preview",
+]
